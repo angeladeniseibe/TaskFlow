@@ -35,12 +35,20 @@ export type TaskFile = {
   createdAt: string;
 };
 
+export type Review = {
+  decision: "approved" | "needs_revision";
+  comment: string;
+  reviewerId: string;
+  createdAt: string;
+};
+
 export type Task = {
   id: string;
   ownerId: string;
   title: string;
   description: string;
   priority: Priority;
+  review?: Review | null;
   progress: number;
   status: Status;
   dueDate: string | null;
@@ -60,6 +68,7 @@ export type NewTask = {
 
 export type Result<T = undefined> = { ok: true; data: T } | { ok: false; error: string };
 export type PickedFile = { uri: string; name: string; size?: number | null; mimeType?: string | null };
+export type ReviewTask = (taskId: string, decision: Review["decision"], comment?: string) => Promise<Result>;
 
 type TasksContextValue = {
   tasks: Task[];
@@ -68,6 +77,7 @@ type TasksContextValue = {
   refresh: () => Promise<void>;
   createTask: (input: NewTask) => Promise<Result<{ id: string; memberErrors: string[] }>>;
   setProgress: (taskId: string, progress: number) => Promise<Result>;
+  reviewTask: ReviewTask; 
   deleteTask: (taskId: string) => Promise<Result>;
   addMember: (taskId: string, person: Person) => Promise<Result>;
   removeMember: (taskId: string, memberId: string) => Promise<Result>;
@@ -184,6 +194,7 @@ export function TasksProvider({ children }: { children: ReactNode }) {
         owner,
         members: input.members,
         files: [],
+        review: null, 
       };
       await commit([task, ...allRef.current]);
       return ok({ id, memberErrors: [] as string[] });
@@ -197,6 +208,29 @@ export function TasksProvider({ children }: { children: ReactNode }) {
       return ok(undefined);
     },
     [update],
+  );
+
+  const reviewTask = useCallback<ReviewTask>(
+    async (taskId, decision, comment = "") => {
+      const task = allRef.current.find((t) => t.id === taskId);
+      if (!task) return failure("Task not found.");
+      if (task.ownerId !== user.id) return failure("Only the owner can review this task.");
+
+      const note = comment.trim();
+      if (decision === "needs_revision" && !note) {
+        return failure("Add a comment so they know what to revise.");
+      }
+
+      const progress = decision === "approved" ? 100 : 50;
+      await update(taskId, (t) => ({
+        ...t,
+        progress,
+        status: statusOf(progress),
+        review: { decision, comment: note, reviewerId: user.id, createdAt: new Date().toISOString() },
+      }));
+      return ok(undefined);
+    },
+    [update, user.id],
   );
 
   const removeMember = useCallback(
@@ -282,6 +316,7 @@ export function TasksProvider({ children }: { children: ReactNode }) {
       refresh: load,
       createTask,
       setProgress,
+      reviewTask, 
       deleteTask,
       addMember,
       removeMember,
@@ -289,7 +324,7 @@ export function TasksProvider({ children }: { children: ReactNode }) {
       deleteFile,
       openFile,
     }),
-    [tasks, isLoading, error, load, createTask, setProgress, deleteTask, addMember, removeMember, uploadFile, deleteFile, openFile],
+    [tasks, isLoading, error, load, createTask, setProgress, reviewTask, deleteTask, addMember, removeMember, uploadFile, deleteFile, openFile],
   );
 
   return <TasksContext.Provider value={value}>{children}</TasksContext.Provider>;

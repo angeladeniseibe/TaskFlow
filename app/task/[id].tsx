@@ -2,7 +2,7 @@ import { Ionicons } from "@expo/vector-icons";
 import * as DocumentPicker from "expo-document-picker";
 import { Redirect, router, useLocalSearchParams } from "expo-router";
 import { useState } from "react";
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import BackButton from "@/components/ui/BackButton";
@@ -33,11 +33,13 @@ function initialsOf(name: string) {
 function TaskDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { user } = useAuth();
-  const { tasks, isLoading, setProgress, deleteTask, addMember, removeMember, uploadFile, deleteFile, openFile } =
+  const { tasks, isLoading, setProgress, reviewTask, deleteTask, addMember, removeMember, uploadFile, deleteFile, openFile } =
     useTasks();
 
   const [isUploading, setIsUploading] = useState(false);
   const [fileError, setFileError] = useState<string | null>(null);
+  const [showRevisionBox, setShowRevisionBox] = useState(false);
+  const [revisionComment, setRevisionComment] = useState(""); 
 
   const task = tasks.find((t) => t.id === id);
 
@@ -62,6 +64,19 @@ function TaskDetail() {
   const changeProgress = async (value: number) => {
     const result = await setProgress(task.id, value);
     if (!result.ok) showMessage("Couldn't update progress", result.error);
+  };
+
+  const handleApprove = async () => {
+    const result = await reviewTask(task.id, "approved");
+    if (!result.ok) showMessage("Couldn't approve", result.error);
+    else setShowRevisionBox(false);
+  };
+
+  const handleNeedsRevision = async () => {
+    const result = await reviewTask(task.id, "needs_revision", revisionComment);
+    if (!result.ok) return showMessage("Couldn't send revision", result.error);
+    setRevisionComment("");
+    setShowRevisionBox(false);
   };
 
   const handleAddMember = async (person: Person) => {
@@ -158,10 +173,56 @@ function TaskDetail() {
           </View>
           <ProgressBar percent={task.progress} height={10} />
           <View style={styles.stepRow}>
-            {PROGRESS_STEPS.map((step) => (
+            {PROGRESS_STEPS.filter((s) => isOwner || s < 100).map((step) => (
               <Chip key={step} label={`${step}%`} selected={task.progress === step} onPress={() => changeProgress(step)} />
             ))}
           </View>
+
+          {/* NEW: latest review, visible to everyone on the task */}
+          {task.review ? (
+            <View style={[styles.reviewBox, task.review.decision === "needs_revision" && styles.reviewBoxRevise]}>
+              <Text style={styles.reviewTitle}>
+                {task.review.decision === "approved" ? "Approved by owner" : "Needs revision"}
+              </Text>
+              {task.review.comment ? <Text style={styles.reviewComment}>{task.review.comment}</Text> : null}
+              <Text style={styles.reviewMeta}>{new Date(task.review.createdAt).toLocaleString()}</Text>
+            </View>
+          ) : null}
+
+          {/* NEW: owner-only review controls */}
+          {isOwner ? (
+            <View style={{ marginTop: spacing.sm }}>
+              {showRevisionBox ? (
+                <>
+                  <TextInput
+                    style={styles.commentInput}
+                    placeholder="What needs to be revised?"
+                    placeholderTextColor={colors.inkFaint}
+                    value={revisionComment}
+                    onChangeText={setRevisionComment}
+                    multiline
+                  />
+                  <View style={styles.reviewActions}>
+                    <Pressable style={styles.reviseButton} onPress={handleNeedsRevision} accessibilityRole="button">
+                      <Text style={styles.reviseText}>Send for revision</Text>
+                    </Pressable>
+                    <Pressable onPress={() => setShowRevisionBox(false)} hitSlop={8}>
+                      <Text style={styles.addLink}>Cancel</Text>
+                    </Pressable>
+                  </View>
+                </>
+              ) : (
+                <View style={styles.reviewActions}>
+                  <Pressable style={styles.approveButton} onPress={handleApprove} accessibilityRole="button">
+                    <Text style={styles.approveText}>Approve (100%)</Text>
+                  </Pressable>
+                  <Pressable style={styles.reviseButton} onPress={() => setShowRevisionBox(true)} accessibilityRole="button">
+                    <Text style={styles.reviseText}>Needs revision (50%)</Text>
+                  </Pressable>
+                </View>
+              )}
+            </View>
+          ) : null}
         </View>
 
         {/* ---- Members ---- */}
@@ -329,4 +390,25 @@ const styles = StyleSheet.create({
     backgroundColor: colors.white,
   },
   deleteText: { fontSize: 15, fontWeight: "700", color: colors.dangerText },
+
+  reviewBox: { marginTop: 12, padding: 12, borderRadius: 10, backgroundColor: colors.primarySoft },
+  reviewBoxRevise: { backgroundColor: colors.dangerSoft },
+  reviewTitle: { fontSize: 13, fontWeight: "800", color: colors.ink },
+  reviewComment: { fontSize: 14, color: colors.ink, marginTop: 4, lineHeight: 20 },
+  reviewMeta: { fontSize: 11, color: colors.inkSubdued, marginTop: 6 },
+  commentInput: {
+    minHeight: 80,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 10,
+    padding: 10,
+    fontSize: 14,
+    color: colors.ink,
+    textAlignVertical: "top",
+  },
+  reviewActions: { flexDirection: "row", alignItems: "center", gap: 10, marginTop: 8 },
+  approveButton: { flex: 1, height: 44, borderRadius: 10, backgroundColor: colors.primary, alignItems: "center", justifyContent: "center" },
+  approveText: { color: colors.white, fontWeight: "700", fontSize: 14 },
+  reviseButton: { flex: 1, height: 44, borderRadius: 10, borderWidth: 1, borderColor: colors.danger, alignItems: "center", justifyContent: "center" },
+  reviseText: { color: colors.dangerText, fontWeight: "700", fontSize: 14 },
 });
